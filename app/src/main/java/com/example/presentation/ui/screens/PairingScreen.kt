@@ -1,5 +1,9 @@
 package com.example.presentation.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -16,11 +20,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.example.domain.model.ConnectionState
 import com.example.presentation.ui.components.ConnectionBadge
 import com.example.presentation.ui.components.QrScannerDialog
@@ -45,9 +51,16 @@ fun PairingScreen(
     val isTesting by viewModel.isTestingConnection.collectAsState()
     val testResults by viewModel.testResults.collectAsState()
 
+    val context = LocalContext.current
     var showScannerDialog by remember { mutableStateOf(false) }
     var showUnpairConfirmDialog by remember { mutableStateOf(false) }
     var showTestSection by remember { mutableStateOf(false) }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { _ ->
+        showScannerDialog = true
+    }
 
     val heartbeatStatus by viewModel.heartbeatStatus.collectAsState()
     val recentCalls by viewModel.recentCalls.collectAsState()
@@ -358,7 +371,13 @@ fun PairingScreen(
 
                     // HUGE PROMINENT PRIMARY BUTTON
                     Button(
-                        onClick = { showScannerDialog = true },
+                        onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                showScannerDialog = true
+                            } else {
+                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                            }
+                        },
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp),

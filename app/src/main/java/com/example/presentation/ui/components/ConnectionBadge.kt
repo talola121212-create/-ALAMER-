@@ -33,7 +33,11 @@ fun ConnectionBadge(
         ConnectionState.CONNECTING,
         ConnectionState.DISCOVERING,
         ConnectionState.SERVER_FOUND,
+        ConnectionState.SCANNING_QR,
+        ConnectionState.QR_PARSED,
         ConnectionState.VERIFYING_SERVER,
+        ConnectionState.SERVER_VERIFIED,
+        ConnectionState.PAIRING,
         ConnectionState.PAIRING_IN_PROGRESS,
         ConnectionState.AUTHENTICATING,
         ConnectionState.RECONNECTING -> StatusConnecting to state.arabicLabel

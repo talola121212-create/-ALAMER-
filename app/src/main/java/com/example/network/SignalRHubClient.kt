@@ -42,15 +42,22 @@ class SignalRHubClient(
         listeners[target] = callback
     }
 
-    fun connect(url: String, onConnected: (() -> Unit)? = null, onError: ((String) -> Unit)? = null) {
+    fun connect(
+        url: String,
+        headers: Map<String, String>? = null,
+        onConnected: (() -> Unit)? = null,
+        onError: ((String) -> Unit)? = null
+    ) {
         disconnect()
 
         _connectionState.value = ConnectionState.CONNECTING
         Log.i(TAG, "Connecting to SignalR hub at $url")
 
-        val request = Request.Builder()
-            .url(url)
-            .build()
+        val builder = Request.Builder().url(url)
+        headers?.forEach { (k, v) ->
+            builder.addHeader(k, v)
+        }
+        val request = builder.build()
 
         webSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {

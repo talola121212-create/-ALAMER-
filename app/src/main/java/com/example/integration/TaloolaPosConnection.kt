@@ -202,30 +202,45 @@ class TaloolaPosConnection(
                 else -> ConnectionState.SERVER_UNAVAILABLE
             }
             return Result.failure(validationResult.exceptionOrNull() ?: Exception("فشل التحقق من الخادم"))
+        } else {
+            _connectionState.value = ConnectionState.SERVER_VERIFIED
+            _lastVerifiedServer.value = validationResult.getOrThrow()
+            DiagnosticLogger.log("Server verification passed: ${session.serverName} (${session.serverId})")
         }
 
         // 3. Send Pair Request POST /api/caller-assistant/pair
-        _connectionState.value = ConnectionState.PAIRING_IN_PROGRESS
+        _connectionState.value = ConnectionState.PAIRING
         val deviceId = secureStorage.getDeviceId()
         val deviceName = secureStorage.getDeviceName()
+        val installationBinding = secureStorage.getInstallationBinding()
 
-        val pairResult = bootstrapClient.pairCallerAssistant(session, deviceId, deviceName, mockFallback = isMock)
+        val pairResult = bootstrapClient.pairCallerAssistant(
+            session = session,
+            deviceId = deviceId,
+            deviceName = deviceName,
+            installationBinding = installationBinding,
+            mockFallback = isMock
+        )
         if (pairResult.isFailure) {
             _connectionState.value = ConnectionState.PAIRING_INVALID
             return Result.failure(pairResult.exceptionOrNull() ?: Exception("فشل طلب الاقتران من جانب الخادم"))
         }
 
         val pairData = pairResult.getOrThrow()
+        _connectionState.value = ConnectionState.PAIRING_SUCCESS
 
         // 4. Save credentials securely (Do NOT save QR token!)
         secureStorage.saveTrustedServerId(pairData.serverId)
         secureStorage.saveServerHost(session.host)
         secureStorage.saveServerPort(session.port)
         secureStorage.saveUseTls(session.tls)
+        secureStorage.saveServerUrl(pairData.serverUrl.ifBlank { session.serverUrl })
+        secureStorage.saveProtocolVersion(pairData.protocolVersion.ifBlank { session.protocolVersion })
+        secureStorage.saveCallerCredential(pairData.callerCredential)
         secureStorage.saveDeviceToken(pairData.deviceToken)
         secureStorage.saveDeviceKey(pairData.deviceKey)
         secureStorage.saveCapabilities(pairData.capabilities)
-        secureStorage.saveSessionToken(pairData.deviceToken)
+        secureStorage.saveSessionToken(pairData.callerCredential)
 
         // 5. Connect SignalR /posHub & AuthenticateCallerAssistant
         _connectionState.value = ConnectionState.CONNECTING
@@ -241,7 +256,7 @@ class TaloolaPosConnection(
             targetPort = session.port,
             tls = session.tls,
             deviceId = deviceId,
-            deviceToken = pairData.deviceToken
+            deviceToken = pairData.callerCredential
         )
 
         return if (authResult.isSuccess) {
@@ -313,15 +328,34 @@ class TaloolaPosConnection(
                 return Result.success(true)
             }
 
-            val responseStr = hubClient.invoke(
-                TaloolaPosCallerHubApi.METHOD_AUTHENTICATE,
-                deviceId,
-                deviceToken
-            )
+            val authPayload = JSONObject().apply {
+                put("DeviceId", deviceId)
+                put("DeviceName", secureStorage.getDeviceName())
+                put("InstallationBinding", secureStorage.getInstallationBinding())
+                put("CallerCredential", deviceToken)
+                put("DeviceToken", deviceToken)
+                put("DeviceKey", secureStorage.getDeviceKey())
+                put("ProtocolVersion", secureStorage.getProtocolVersion())
+                put("Platform", "Android")
+            }
+
+            val responseStr = try {
+                hubClient.invoke(
+                    TaloolaPosCallerHubApi.METHOD_AUTHENTICATE,
+                    authPayload.toString()
+                )
+            } catch (e: Exception) {
+                // Fallback to positional invocation if server expects (string deviceId, string deviceToken)
+                hubClient.invoke(
+                    TaloolaPosCallerHubApi.METHOD_AUTHENTICATE,
+                    deviceId,
+                    deviceToken
+                )
+            }
             val json = JSONObject(responseStr)
-            val success = json.optBoolean("success", false)
-            val capsGranted = json.optBoolean("callerAssistantGranted", true)
-            val serverId = json.optString("serverId", "")
+            val success = json.optBoolean("Success", json.optBoolean("success", false))
+            val capsGranted = json.optBoolean("CallerAssistantGranted", json.optBoolean("callerAssistantGranted", true))
+            val serverId = json.optString("ServerId", json.optString("serverId", ""))
 
             if (success && capsGranted) {
                 if (serverId.isNotBlank()) {
@@ -333,7 +367,7 @@ class TaloolaPosConnection(
                 DiagnosticLogger.log("Caller Assistant authenticated successfully on /posHub ✓")
                 Result.success(true)
             } else {
-                val reason = json.optString("message", "تم رفض اعتماد البدالة من الخادم")
+                val reason = json.optString("Message", json.optString("message", "تم رفض اعتماد البدالة من الخادم"))
                 _connectionState.value = ConnectionState.ACCESS_DENIED
                 DiagnosticLogger.log("Authentication rejected: $reason", isError = true)
                 Result.failure(Exception(reason))
@@ -360,7 +394,7 @@ class TaloolaPosConnection(
             targetPort = targetPort,
             tls = secureStorage.getUseTls(),
             deviceId = secureStorage.getDeviceId(),
-            deviceToken = secureStorage.getDeviceToken().ifBlank { secureStorage.getSessionToken() }
+            deviceToken = secureStorage.getCallerCredential()
         )
     }
 
@@ -373,7 +407,7 @@ class TaloolaPosConnection(
         val port = secureStorage.getServerPort()
         val tls = secureStorage.getUseTls()
         val deviceId = secureStorage.getDeviceId()
-        val deviceToken = secureStorage.getDeviceToken()
+        val deviceToken = secureStorage.getCallerCredential()
 
         try {
             bootstrapClient.unpairCallerAssistant(host, port, tls, deviceId, deviceToken)
@@ -390,7 +424,7 @@ class TaloolaPosConnection(
     }
 
     /**
-     * Connects to SignalR endpoint /posHub
+     * Connects to SignalR endpoint /posHub with device security headers
      */
     suspend fun connect(
         host: String = secureStorage.getServerHost(),
@@ -406,6 +440,14 @@ class TaloolaPosConnection(
         val wsUrl = "$scheme://$host:$port${TaloolaPosCallerHubApi.HUB_ENDPOINT}"
         DiagnosticLogger.log("Connecting SignalR to $wsUrl")
 
+        val headers = mapOf(
+            "X-Device-Id" to secureStorage.getDeviceId(),
+            "X-Device-Token" to secureStorage.getCallerCredential(),
+            "X-Device-Key" to secureStorage.getDeviceKey(),
+            "X-Device-Type" to "CallerAssistant",
+            "X-Installation-Binding" to secureStorage.getInstallationBinding()
+        )
+
         return try {
             val isMock = secureStorage.isMockModeEnabled()
             if (isMock) {
@@ -416,6 +458,7 @@ class TaloolaPosConnection(
             val completer = CompletableDeferred<Boolean>()
             hubClient.connect(
                 url = wsUrl,
+                headers = headers,
                 onConnected = {
                     DiagnosticLogger.log("SignalR /posHub connected successfully")
                     completer.complete(true)

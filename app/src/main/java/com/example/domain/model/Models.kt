@@ -96,28 +96,66 @@ data class CallerPairResponse(
     val capabilities: List<String> = listOf("CallerAssistant"),
     val hubPath: String = "/posHub",
     val expiresAt: Long = 0L,
-    val message: String = ""
+    val message: String = "",
+    val callerCredential: String = deviceToken,
+    val deviceStatus: String = "Approved",
+    val serverUrl: String = "",
+    val protocolVersion: String = "1.0",
+    val installationBinding: String = ""
+)
+
+data class CallerAssistantPairingRequest(
+    val version: Int = 1,
+    val deviceType: String = "CallerAssistant",
+    val serverId: String,
+    val protocolVersion: String = "1.0",
+    val pairingId: String,
+    val token: String,
+    val deviceId: String,
+    val deviceName: String = "Alamer بدالة",
+    val installationBinding: String = ""
+)
+
+data class CallerAssistantPairingResult(
+    val success: Boolean,
+    val errorCode: String = "",
+    val message: String = "",
+    val serverId: String = "",
+    val serverUrl: String = "",
+    val protocolVersion: String = "1.0",
+    val deviceId: String = "",
+    val deviceName: String = "Alamer بدالة",
+    val installationBinding: String = "",
+    val callerCredential: String = "",
+    val deviceStatus: String = "Approved",
+    val capabilities: List<String> = listOf("CallerAssistant")
 )
 
 enum class ConnectionState(val arabicLabel: String) {
     DISCONNECTED("غير مقترن"),
-    DISCOVERING("جاري البحث عن الخادم"),
-    SERVER_FOUND("تم اكتشاف الخادم"),
+    SCANNING_QR("جاري مسح رمز QR"),
+    QR_PARSED("تمت قراءة الرمز"),
     VERIFYING_SERVER("جاري التحقق من الخادم"),
-    PAIRING_REQUIRED("الاقتران مطلوب"),
-    PAIRING_IN_PROGRESS("جاري التحقق والاقتران..."),
-    PAIRING_SUCCESS("تم الاقتران بنجاح"),
+    SERVER_VERIFIED("تم التحقق من الخادم ✓"),
+    PAIRING("جاري الاقتران مع الخادم..."),
+    PAIRING_SUCCESS("تم الاقتران بنجاح ✓"),
     AUTHENTICATING("جاري المصادقة عبر SignalR"),
-    CONNECTING("جاري الاتصال..."),
     CONNECTED("متصل مع الخادم"),
     READY("متصل مع TaloolaPos"),
     RECONNECTING("جاري إعادة الاتصال..."),
     SESSION_EXPIRED("جلسة منتهية"),
-    ACCESS_DENIED("صلاحية مرفوضة"),
     SERVER_UNAVAILABLE("الخادم غير متاح"),
-    PROTOCOL_MISMATCH("عدم تطابق في البروتوكول"),
-    PAIRING_EXPIRED("رمز الاقتران منتهي"),
-    PAIRING_INVALID("بيانات الاقتران غير صالحة")
+    PAIRING_EXPIRED("رمز QR منتهي"),
+    PAIRING_INVALID("بيانات الاقتران غير صالحة"),
+    PROTOCOL_MISMATCH("إصدار البروتوكول غير متوافق"),
+    ACCESS_DENIED("صلاحية مرفوضة"),
+
+    // Compatibility states
+    DISCOVERING("جاري فحص الشبكة"),
+    SERVER_FOUND("تم العثور على الخادم"),
+    CONNECTING("جاري الاتصال..."),
+    PAIRING_REQUIRED("الاقتران مطلوب"),
+    PAIRING_IN_PROGRESS("جاري التحقق والاقتران...")
 }
 
 data class PairingSession(
@@ -155,16 +193,19 @@ data class PairingSession(
     companion object {
         fun parseFromUri(rawUri: String): PairingSession? {
             return try {
-                val clean = rawUri.trim()
-                if (!clean.startsWith("taloola-caller://pair", ignoreCase = true)) {
+                val clean = rawUri.trim().removeSurrounding("\"", "\"").removeSurrounding("'", "'")
+                if (!clean.contains("taloola-caller://pair", ignoreCase = true) && !clean.contains("taloola-caller", ignoreCase = true)) {
                     return null
                 }
 
-                val uri = URI(clean)
-                val query = uri.query ?: return null
-                val params = query.split("&").associate {
+                val query = if (clean.contains("?")) clean.substringAfter("?") else clean
+                val params = query.split("&").filter { it.isNotBlank() }.associate {
                     val parts = it.split("=", limit = 2)
-                    URLDecoder.decode(parts[0], "UTF-8") to if (parts.size > 1) URLDecoder.decode(parts[1], "UTF-8") else ""
+                    val key = try { URLDecoder.decode(parts[0], "UTF-8").trim() } catch (e: Exception) { parts[0].trim() }
+                    val value = if (parts.size > 1) {
+                        try { URLDecoder.decode(parts[1], "UTF-8").trim() } catch (e: Exception) { parts[1].trim() }
+                    } else ""
+                    key to value
                 }
 
                 val v = params["v"]?.toIntOrNull() ?: 1

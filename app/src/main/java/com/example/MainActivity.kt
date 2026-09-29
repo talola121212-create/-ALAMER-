@@ -81,6 +81,12 @@ fun MainScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val connectionState by settingsViewModel.connectionState.collectAsState()
 
+    if (selectedTab != NavigationTab.CALLS) {
+        androidx.activity.compose.BackHandler {
+            selectedTab = NavigationTab.CALLS
+        }
+    }
+
     // Observe user messages
     LaunchedEffect(Unit) {
         callerViewModel.userMessage.collectLatest { msg ->

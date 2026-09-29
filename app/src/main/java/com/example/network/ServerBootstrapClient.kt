@@ -183,19 +183,38 @@ class ServerBootstrapClient(
         session: PairingSession,
         deviceId: String,
         deviceName: String,
+        installationBinding: String = "",
         mockFallback: Boolean = false
     ): Result<CallerPairResponse> = withContext(Dispatchers.IO) {
         val scheme = if (session.tls) "https" else "http"
-        val url = "$scheme://${session.host}:${session.port}/api/caller-assistant/pair"
+        val serverUrl = "$scheme://${session.host}:${session.port}"
+        val url = "$serverUrl/api/caller-assistant/pair"
         DiagnosticLogger.log("Sending POST /api/caller-assistant/pair to $url")
 
         val payload = JSONObject().apply {
+            // CallerAssistantPairingRequest PascalCase contract
+            put("Version", session.version)
+            put("DeviceType", "CallerAssistant")
+            put("ServerId", session.serverId)
+            put("ProtocolVersion", session.protocolVersion)
+            put("PairingId", session.pairingId)
+            put("Token", session.token)
+            put("PairingToken", session.token)
+            put("DeviceId", deviceId)
+            put("DeviceName", deviceName)
+            put("InstallationBinding", installationBinding)
+            put("Platform", "Android")
+            put("AppVersion", "1.0.0")
+            val capsArr = org.json.JSONArray().apply { put("CallerAssistant") }
+            put("RequestedCapabilities", capsArr)
+
+            // CamelCase compatibility keys
             put("pairingId", session.pairingId)
             put("token", session.token)
             put("deviceId", deviceId)
             put("deviceName", deviceName)
             put("deviceModel", android.os.Build.MODEL)
-            put("appVersion", "1.0")
+            put("appVersion", "1.0.0")
             put("platform", "Android")
             put("requestedRole", "CallerAssistant")
             put("timestamp", System.currentTimeMillis())
@@ -211,16 +230,28 @@ class ServerBootstrapClient(
             if (response.isSuccessful) {
                 val body = response.body?.string().orEmpty()
                 val json = JSONObject(body)
-                val success = json.optBoolean("success", false)
-                val sid = json.optString("serverId", "")
-                val sName = json.optString("serverName", "Taloola POS")
-                val dId = json.optString("deviceId", deviceId)
-                val dToken = json.optString("deviceToken", "")
-                val dKey = json.optString("deviceKey", "")
-                val hubPath = json.optString("hubPath", "/posHub")
-                val exp = json.optLong("expiresAt", System.currentTimeMillis() + 86400_000L)
+                val success = json.optBoolean("Success", json.optBoolean("success", false))
+                val sid = json.optString("ServerId", json.optString("serverId", ""))
+                val sName = json.optString("ServerName", json.optString("serverName", "Taloola POS"))
+                val sUrl = json.optString("ServerUrl", json.optString("serverUrl", serverUrl))
+                val proto = json.optString("ProtocolVersion", json.optString("protocolVersion", session.protocolVersion))
+                val dId = json.optString("DeviceId", json.optString("deviceId", deviceId))
+                val dName = json.optString("DeviceName", json.optString("deviceName", deviceName))
+                val instBinding = json.optString("InstallationBinding", json.optString("installationBinding", installationBinding))
+                val dStatus = json.optString("DeviceStatus", json.optString("deviceStatus", "Approved"))
+                
+                // Read CallerCredential / DeviceToken / DeviceKey
+                val cred = json.optString("CallerCredential", json.optString("callerCredential", ""))
+                val dToken = json.optString("DeviceToken", json.optString("deviceToken", cred))
+                val dKey = json.optString("DeviceKey", json.optString("deviceKey", cred.ifBlank { dToken }))
+                val finalCred = cred.ifBlank { dToken }
+                
+                val hubPath = json.optString("HubPath", json.optString("hubPath", "/posHub"))
+                val exp = json.optLong("ExpiresAt", json.optLong("expiresAt", System.currentTimeMillis() + 86400_000L))
+                val msg = json.optString("Message", json.optString("message", ""))
+                
                 val caps = mutableListOf<String>()
-                val capsArray = json.optJSONArray("capabilities")
+                val capsArray = json.optJSONArray("Capabilities") ?: json.optJSONArray("capabilities")
                 if (capsArray != null) {
                     for (i in 0 until capsArray.length()) {
                         caps.add(capsArray.optString(i))
@@ -230,8 +261,8 @@ class ServerBootstrapClient(
                 }
 
                 if (!success) {
-                    val msg = json.optString("message", "فشل طلب الاقتران من جانب الخادم")
-                    return@withContext Result.failure(Exception(msg))
+                    val errMsg = if (msg.isNotBlank()) msg else "فشل طلب الاقتران من جانب الخادم"
+                    return@withContext Result.failure(Exception(errMsg))
                 }
 
                 if (!sid.equals(session.serverId, ignoreCase = true)) {
@@ -239,7 +270,11 @@ class ServerBootstrapClient(
                 }
 
                 if (!caps.contains("CallerAssistant")) {
-                    return@withContext Result.failure(Exception("هذا الجهاز لا يملك صلاحية البدالة (CallerAssistant)"))
+                    return@withContext Result.failure(Exception("هذا الجهاز لا يملك صلاحية البدالة."))
+                }
+
+                if (finalCred.isBlank()) {
+                    return@withContext Result.failure(Exception("لم يقم الخادم بإصدار بيانات اعتماد CallerCredential"))
                 }
 
                 val pairResponse = CallerPairResponse(
@@ -247,13 +282,19 @@ class ServerBootstrapClient(
                     serverId = sid,
                     serverName = sName,
                     deviceId = dId,
-                    deviceToken = dToken,
+                    deviceToken = finalCred,
                     deviceKey = dKey,
                     capabilities = caps,
                     hubPath = hubPath,
-                    expiresAt = exp
+                    expiresAt = exp,
+                    message = msg,
+                    callerCredential = finalCred,
+                    deviceStatus = dStatus,
+                    serverUrl = sUrl,
+                    protocolVersion = proto,
+                    installationBinding = instBinding
                 )
-                DiagnosticLogger.log("Caller assistant paired successfully with server $sid")
+                DiagnosticLogger.log("Caller assistant paired successfully with server $sid (Credential issued)")
                 Result.success(pairResponse)
             } else {
                 if (mockFallback) {
@@ -266,7 +307,12 @@ class ServerBootstrapClient(
                         deviceKey = "key_" + UUID.randomUUID().toString().take(12),
                         capabilities = listOf("CallerAssistant"),
                         hubPath = "/posHub",
-                        expiresAt = System.currentTimeMillis() + 86400_000L
+                        expiresAt = System.currentTimeMillis() + 86400_000L,
+                        callerCredential = "cred_" + UUID.randomUUID().toString().take(16),
+                        deviceStatus = "Approved",
+                        serverUrl = serverUrl,
+                        protocolVersion = session.protocolVersion,
+                        installationBinding = installationBinding
                     )
                     Result.success(mockResponse)
                 } else {

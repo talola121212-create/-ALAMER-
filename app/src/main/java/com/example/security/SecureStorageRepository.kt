@@ -32,6 +32,9 @@ class SecureStorageRepository(private val context: Context) {
         private const val PREF_USE_TLS = "sec_use_tls"
         private const val PREF_DEVICE_TOKEN = "sec_device_token"
         private const val PREF_DEVICE_KEY = "sec_device_key"
+        private const val PREF_CALLER_CREDENTIAL = "sec_caller_credential"
+        private const val PREF_SERVER_URL = "sec_server_url"
+        private const val PREF_PROTOCOL_VERSION = "sec_protocol_version"
         private const val PREF_CAPABILITIES = "sec_capabilities"
         private const val PREF_INSTALLATION_BINDING = "sec_installation_binding"
         private const val PREF_OPERATOR_ACCOUNT = "sec_operator_account"
@@ -262,10 +265,39 @@ class SecureStorageRepository(private val context: Context) {
         sharedPreferences.edit().putString(PREF_CAPABILITIES, capabilities.joinToString(",")).apply()
     }
 
+    fun getCallerCredential(): String {
+        val enc = sharedPreferences.getString(PREF_CALLER_CREDENTIAL, "") ?: ""
+        val decrypted = decrypt(enc)
+        return if (decrypted.isNotBlank()) decrypted else getDeviceToken()
+    }
+
+    fun saveCallerCredential(credential: String) {
+        sharedPreferences.edit().putString(PREF_CALLER_CREDENTIAL, encrypt(credential)).apply()
+    }
+
+    fun getServerUrl(): String {
+        val stored = sharedPreferences.getString(PREF_SERVER_URL, "") ?: ""
+        if (stored.isNotBlank()) return stored
+        val scheme = if (getUseTls()) "https" else "http"
+        return "$scheme://${getServerHost()}:${getServerPort()}"
+    }
+
+    fun saveServerUrl(url: String) {
+        sharedPreferences.edit().putString(PREF_SERVER_URL, url).apply()
+    }
+
+    fun getProtocolVersion(): String {
+        return sharedPreferences.getString(PREF_PROTOCOL_VERSION, "1.0") ?: "1.0"
+    }
+
+    fun saveProtocolVersion(version: String) {
+        sharedPreferences.edit().putString(PREF_PROTOCOL_VERSION, version).apply()
+    }
+
     fun isPaired(): Boolean {
         val serverId = getTrustedServerId()
-        val deviceToken = getDeviceToken()
-        return serverId.isNotBlank() && deviceToken.isNotBlank()
+        val token = getCallerCredential()
+        return serverId.isNotBlank() && token.isNotBlank()
     }
 
     fun clearAllPairingCredentials() {
@@ -273,6 +305,8 @@ class SecureStorageRepository(private val context: Context) {
             .remove(PREF_TRUSTED_SERVER_ID)
             .remove(PREF_DEVICE_TOKEN)
             .remove(PREF_DEVICE_KEY)
+            .remove(PREF_CALLER_CREDENTIAL)
+            .remove(PREF_SERVER_URL)
             .remove(PREF_SESSION_TOKEN)
             .remove(PREF_CAPABILITIES)
             .apply()
