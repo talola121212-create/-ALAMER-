@@ -1,11 +1,34 @@
-<div align="center">
+# Alamer بدالة (ALAMER CALL ASSISTANT)
+### تطبيق البدالة الذكي المصاحب لنظام TaloolaPos للمطاعم وخدمات التوصيل
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+---
 
-  <h1>Built with AI Studio</h2>
+## 📌 نبذة عن التطبيق
+تطبيق **Alamer بدالة** هو تطبيق Android Native احترافي يعمل كـ **Companion Client** مستقل لنظام المطاعم المركزي **TaloolaPos** العامل على بيئة Windows.
+الهدف الرئيسي للتطبيق هو الربط المباشر بين المكالمات الواردة لهاتف البدالة الخاص بالمطعم وقاعدة بيانات TaloolaPos، لعرض كافة بيانات العميل والطلبات والملاحظات السابقة وإرسالها بلمسة واحدة لشاشة الكاشير.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+---
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## ✨ الميزات الرئيسية
+1. **اكتشاف فوري للمكالمات:** عبر خدمة `CallScreeningService` دون التسبب بأي تأخير في استقبال المكالمة على نظام Android Telecom.
+2. **معالجة الأرقام العراقية:** معالج `PhoneNormalizer` لتحويل الأرقام بصيغها المتعددة (+964, 00964, 7, الأرقام الهندية/الفارسية) إلى الصيغة القياسية الموحدة `07xxxxxxxxx`.
+3. **عرض سريع لبيانات العميل:**
+   - الاسم، المنطقة، العنوان التفصيلي، والملاحظات السابقة.
+   - تفاصيل آخر مكالمة مسجلة.
+   - تفاصيل آخر طلب مسجل (رقم الطلب، النوع، الإجمالي، الحالة).
+   - موقع العميل المخزن في TaloolaPos مع زر فتح خرائط Google.
+4. **إرسال مباشر للكاشير:** إرسال رقم المتصل وبياناته لشاشة الكاشير بضغطة زر.
+5. **إنشاء عميل جديد:** إمكانية تسجيل وتثبيت بيانات عميل جديد في TaloolaPos من داخل واجهة البدالة.
+6. **العمل دون اتصال (Offline Mode):** تخزين مؤقت مشفر في Room للعملاء، ومزامنة المكالمات تلقائياً فور عودة الاتصال.
+7. **وضع المحاكاة والتطوير (Mock Mode):** بيئة متكاملة لفحص النظام وتجربة المكالمات دون الحاجة لسيرفر حقيقي متصل أثناء الفحص والتطوير.
 
-</div>
+---
+
+## 🏗 المعمارية والتقنيات
+- **المنصة:** Android Native (Kotlin)
+- **واجهة المستخدم:** Jetpack Compose (Material Design 3 - RTL Arabic)
+- **النمط المعماري:** Clean Architecture + MVVM
+- **الاتصال الشبكي:** SignalR Client over WebSocket (/posHub) + UDP Discovery (5051)
+- **قاعدة البيانات المحلية:** Room Database
+- **الأمان:** Android KeyStore (Hardware-backed AES-256 GCM)
+- **التعامل مع المكالمات:** Android Telecom `CallScreeningService`

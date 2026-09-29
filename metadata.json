@@ -1,0 +1,6 @@
+{
+  "name": "Alamer بدالة",
+  "description": "تطبيق بدالة احترافي للربط مع نظام TaloolaPos وإدارة المكالمات الواردة لخدمة الدلفري والطلبات",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
