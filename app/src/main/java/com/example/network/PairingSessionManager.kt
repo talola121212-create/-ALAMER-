@@ -15,21 +15,15 @@ class PairingSessionManager {
     val currentSession: StateFlow<PairingSession?> = _currentSession.asStateFlow()
 
     init {
-        // Pre-seed an initial demonstration session
-        createPairingSession(
-            serverId = "TALOOLA-SRV-BAGHDAD-01",
-            host = "192.168.1.20",
-            port = 5000,
-            durationSeconds = 300 // 5 minutes
-        )
+        // No hardcoded serverId pre-seeding
     }
 
     /**
      * Creates a temporary, one-time pairing session.
      */
     fun createPairingSession(
-        serverId: String = "TALOOLA-SRV-BAGHDAD-01",
-        host: String = "192.168.1.20",
+        serverId: String,
+        host: String = "127.0.0.1",
         port: Int = 5000,
         tls: Boolean = false,
         durationSeconds: Long = 300

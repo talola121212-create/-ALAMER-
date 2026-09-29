@@ -397,8 +397,9 @@ fun QrScannerDialog(
                     // 1. Instant One-Tap Simulation Button (Great for testing without live POS screen)
                     Button(
                         onClick = {
+                            val sid = viewModel.trustedServerId.value.ifBlank { "POS-SRV-" + java.util.UUID.randomUUID().toString().take(6).uppercase() }
                             val session = activeSession ?: viewModel.pairingSessionManager.createPairingSession(
-                                serverId = "TALOOLA-SRV-BAGHDAD-01",
+                                serverId = sid,
                                 host = viewModel.serverHost.value,
                                 port = viewModel.serverPort.value,
                                 tls = false,

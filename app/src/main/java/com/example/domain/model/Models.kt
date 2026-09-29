@@ -73,7 +73,7 @@ data class ServerInfo(
 )
 
 data class ServerBootstrapInfo(
-    val serverId: String = "TALOOLA-SRV-BAGHDAD-01",
+    val serverId: String = "",
     val serviceName: String = "Taloola POS",
     val serverVersion: String = "3.2.0",
     val protocolVersion: String = "1.0",
@@ -129,6 +129,35 @@ data class CallerAssistantPairingResult(
     val callerCredential: String = "",
     val deviceStatus: String = "Approved",
     val capabilities: List<String> = listOf("CallerAssistant")
+)
+
+data class CallerAssistantReconnectRequest(
+    val serverId: String,
+    val deviceId: String,
+    val installationBinding: String,
+    val callerCredential: String,
+    val protocolVersion: String = "1.0",
+    val deviceType: String = "CallerAssistant",
+    val platform: String = "Android"
+)
+
+data class CallerAssistantReconnectResult(
+    val success: Boolean,
+    val serverId: String,
+    val deviceStatus: String = "Approved",
+    val callerAssistantGranted: Boolean = true,
+    val message: String = ""
+)
+
+data class ServerIdentityAuditSequence(
+    val qrRaw: String,
+    val qrServerId: String,
+    val qrHost: String,
+    val qrPort: Int,
+    val httpServerInfoServerId: String,
+    val savedTrustedServerId: String,
+    val finalServerIdUsedByPairRequest: String,
+    val finalServerIdUsedBySignalRAuth: String
 )
 
 enum class ConnectionState(val arabicLabel: String) {
@@ -260,7 +289,7 @@ data class CallAssistantStatus(
     val activeCallsCount: Int = 0,
     val lastCallerMessageAtUtc: String = "",
     val lastHeartbeatUtc: String = "",
-    val serverId: String = "TALOOLA-SRV-BAGHDAD-01"
+    val serverId: String = ""
 )
 
 enum class TestCheckStatus {

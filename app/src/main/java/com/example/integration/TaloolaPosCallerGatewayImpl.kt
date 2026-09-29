@@ -171,27 +171,39 @@ class TaloolaPosCallerGatewayImpl(
     }
 
     override suspend fun sendCallerContextToCashier(context: CustomerContext): Result<Boolean> {
+        val json = JSONObject().apply {
+            put("customerId", context.customerId)
+            put("phone", context.phone)
+            put("normalizedPhone", context.normalizedPhone)
+            put("name", context.name)
+            put("area", context.area)
+            put("address", context.address)
+            put("notes", context.notes)
+            put("deviceId", secureStorage.getDeviceId())
+            put("operatorAccount", secureStorage.getOperatorAccount())
+        }
+
+        if (connection.connectionState.value != com.example.domain.model.ConnectionState.READY) {
+            connection.queuePendingContext(context)
+            Log.i(TAG, "Not connected to cashier: context queued for ${context.phone}")
+            return Result.success(false)
+        }
+
         return try {
-            val json = JSONObject().apply {
-                put("customerId", context.customerId)
-                put("phone", context.phone)
-                put("normalizedPhone", context.normalizedPhone)
-                put("name", context.name)
-                put("area", context.area)
-                put("address", context.address)
-                put("notes", context.notes)
-                put("deviceId", secureStorage.getDeviceId())
-                put("operatorAccount", secureStorage.getOperatorAccount())
-            }
             val responseStr = connection.hubClient.invoke(
                 TaloolaPosCallerHubApi.METHOD_SEND_CONTEXT_TO_CASHIER,
                 json.toString(),
                 secureStorage.getSessionToken()
             )
             val res = JSONObject(responseStr)
-            Result.success(res.optBoolean("success", true))
+            val ack = res.optBoolean("Success", res.optBoolean("success", true))
+            if (!ack) {
+                connection.queuePendingContext(context)
+            }
+            Result.success(ack)
         } catch (e: Exception) {
-            Result.failure(e)
+            connection.queuePendingContext(context)
+            Result.success(false)
         }
     }
 

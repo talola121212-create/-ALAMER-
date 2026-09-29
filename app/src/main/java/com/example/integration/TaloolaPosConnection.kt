@@ -171,6 +171,13 @@ class TaloolaPosConnection(
      * TaloolaPos QR -> Parse URI -> Validate Server -> POST /api/caller-assistant/pair ->
      * Receive CallerCredential -> Secure Storage -> SignalR /posHub -> AuthenticateCallerAssistant -> READY
      */
+    /**
+     * STEP 3 & 4: QR-Only Pairing & Device Registration
+     *
+     * Flow:
+     * TaloolaPos QR -> Parse URI -> Validate Server -> POST /api/caller-assistant/pair ->
+     * Receive CallerCredential -> Secure Storage -> SignalR /posHub -> AuthenticateCallerAssistant -> READY
+     */
     suspend fun pairWithQr(qrUri: String): Result<CallerPairResponse> {
         _connectionState.value = ConnectionState.PAIRING_IN_PROGRESS
         DiagnosticLogger.log("Starting QR-only pairing process...")
@@ -179,34 +186,48 @@ class TaloolaPosConnection(
         val session = PairingSession.parseFromUri(qrUri)
         if (session == null) {
             _connectionState.value = ConnectionState.PAIRING_INVALID
-            DiagnosticLogger.log("Invalid QR scheme or parameters: not taloola-caller://pair", isError = true)
+            DiagnosticLogger.log("Stage A failed: Invalid QR scheme or missing parameters", isError = true)
             return Result.failure(Exception("رمز QR غير صالح أو ليس رمز ربط Alamer."))
         }
 
         if (session.isExpired) {
             _connectionState.value = ConnectionState.PAIRING_EXPIRED
-            DiagnosticLogger.log("Pairing QR expired at ${session.expiresAtEpochMs}", isError = true)
-            return Result.failure(Exception("QR منتهي"))
+            DiagnosticLogger.log("Stage B failed: Pairing QR expired at ${session.expiresAtEpochMs}", isError = true)
+            return Result.failure(Exception("رمز QR منتهي الصلاحية، يرجى إنشاء رمز جديد من TaloolaPos"))
         }
 
-        val isMock = secureStorage.isMockModeEnabled()
+        // Section 4 Required Sequence Logging
+        DiagnosticLogger.log("[IDENTITY] QR_RAW: $qrUri")
+        DiagnosticLogger.log("[IDENTITY] QR_SERVER_ID: ${session.serverId}")
+        DiagnosticLogger.log("[IDENTITY] QR_HOST: ${session.host}")
+        DiagnosticLogger.log("[IDENTITY] QR_PORT: ${session.port}")
 
         // 2. Validate Server Info (GET /api/server/info)
+        // In QR flow, QR is the bootstrap authority!
         _connectionState.value = ConnectionState.VERIFYING_SERVER
-        val validationResult = bootstrapClient.validateServerForSession(session, mockFallback = isMock)
+        val validationResult = bootstrapClient.validateServerForSession(
+            session = session,
+            savedTrustedServerId = secureStorage.getTrustedServerId(),
+            mockFallback = false
+        )
+
         if (validationResult.isFailure) {
             val err = validationResult.exceptionOrNull()?.message ?: "الخادم غير متاح"
             _connectionState.value = when {
-                err.contains("Protocol") -> ConnectionState.PROTOCOL_MISMATCH
-                err.contains("Server ID") -> ConnectionState.SERVER_UNAVAILABLE
+                err.contains("البروتوكول") || err.contains("Protocol") -> ConnectionState.PROTOCOL_MISMATCH
+                err.contains("غير مطابق") || err.contains("MISMATCH") -> ConnectionState.SERVER_UNAVAILABLE
                 else -> ConnectionState.SERVER_UNAVAILABLE
             }
             return Result.failure(validationResult.exceptionOrNull() ?: Exception("فشل التحقق من الخادم"))
-        } else {
-            _connectionState.value = ConnectionState.SERVER_VERIFIED
-            _lastVerifiedServer.value = validationResult.getOrThrow()
-            DiagnosticLogger.log("Server verification passed: ${session.serverName} (${session.serverId})")
         }
+
+        val verifiedServer = validationResult.getOrThrow()
+        _lastVerifiedServer.value = verifiedServer
+        _connectionState.value = ConnectionState.SERVER_VERIFIED
+
+        DiagnosticLogger.log("[IDENTITY] HTTP_SERVER_INFO_SERVER_ID: ${verifiedServer.serverId}")
+        DiagnosticLogger.log("[IDENTITY] SAVED_TRUSTED_SERVER_ID: ${secureStorage.getTrustedServerId().ifBlank { "NONE" }}")
+        DiagnosticLogger.log("[IDENTITY] FINAL_SERVER_ID_USED_BY_PAIR_REQUEST: ${session.serverId}")
 
         // 3. Send Pair Request POST /api/caller-assistant/pair
         _connectionState.value = ConnectionState.PAIRING
@@ -219,7 +240,7 @@ class TaloolaPosConnection(
             deviceId = deviceId,
             deviceName = deviceName,
             installationBinding = installationBinding,
-            mockFallback = isMock
+            mockFallback = false
         )
         if (pairResult.isFailure) {
             _connectionState.value = ConnectionState.PAIRING_INVALID
@@ -229,20 +250,22 @@ class TaloolaPosConnection(
         val pairData = pairResult.getOrThrow()
         _connectionState.value = ConnectionState.PAIRING_SUCCESS
 
-        // 4. Save credentials securely (Do NOT save QR token!)
-        secureStorage.saveTrustedServerId(pairData.serverId)
-        secureStorage.saveServerHost(session.host)
-        secureStorage.saveServerPort(session.port)
-        secureStorage.saveUseTls(session.tls)
-        secureStorage.saveServerUrl(pairData.serverUrl.ifBlank { session.serverUrl })
-        secureStorage.saveProtocolVersion(pairData.protocolVersion.ifBlank { session.protocolVersion })
-        secureStorage.saveCallerCredential(pairData.callerCredential)
-        secureStorage.saveDeviceToken(pairData.deviceToken)
-        secureStorage.saveDeviceKey(pairData.deviceKey)
-        secureStorage.saveCapabilities(pairData.capabilities)
-        secureStorage.saveSessionToken(pairData.callerCredential)
+        // 4. Save credentials securely (Do NOT save raw QR token!)
+        secureStorage.savePairingCredentials(
+            serverId = pairData.serverId,
+            serverUrl = pairData.serverUrl.ifBlank { session.serverUrl },
+            host = session.host,
+            port = session.port,
+            tls = session.tls,
+            callerCredential = pairData.callerCredential,
+            deviceToken = pairData.deviceToken,
+            deviceKey = pairData.deviceKey,
+            protocolVersion = pairData.protocolVersion.ifBlank { session.protocolVersion },
+            capabilities = pairData.capabilities
+        )
 
         // 5. Connect SignalR /posHub & AuthenticateCallerAssistant
+        DiagnosticLogger.log("[IDENTITY] FINAL_SERVER_ID_USED_BY_SIGNALR_AUTH: ${pairData.serverId}")
         _connectionState.value = ConnectionState.CONNECTING
         val connectResult = connect(session.host, session.port, session.tls)
         if (connectResult.isFailure) {
@@ -256,13 +279,15 @@ class TaloolaPosConnection(
             targetPort = session.port,
             tls = session.tls,
             deviceId = deviceId,
-            deviceToken = pairData.callerCredential
+            deviceToken = pairData.callerCredential,
+            expectedServerId = pairData.serverId
         )
 
         return if (authResult.isSuccess) {
             pairingSessionManager.consumePairingSession(session.pairingId)
             _connectionState.value = ConnectionState.READY
             startHeartbeat()
+            flushPendingContextQueue()
             DiagnosticLogger.log("Alamer بدالة is now READY and paired with TaloolaPos ✓")
             Result.success(pairData)
         } else {
@@ -306,10 +331,11 @@ class TaloolaPosConnection(
         targetPort: Int = secureStorage.getServerPort(),
         tls: Boolean = secureStorage.getUseTls(),
         deviceId: String = secureStorage.getDeviceId(),
-        deviceToken: String = secureStorage.getDeviceToken()
+        deviceToken: String = secureStorage.getDeviceToken(),
+        expectedServerId: String = secureStorage.getTrustedServerId()
     ): Result<Boolean> {
         _connectionState.value = ConnectionState.AUTHENTICATING
-        DiagnosticLogger.log("Invoking AuthenticateCallerAssistant on /posHub...")
+        DiagnosticLogger.log("Invoking AuthenticateCallerAssistant on /posHub (ExpectedServerId=$expectedServerId)...")
 
         // Connect SignalR if not yet connected
         val connectResult = connect(targetHost, targetPort, tls)
@@ -318,16 +344,6 @@ class TaloolaPosConnection(
         }
 
         return try {
-            val isMock = secureStorage.isMockModeEnabled()
-            if (isMock) {
-                delay(150)
-                _connectionState.value = ConnectionState.READY
-                reconnectAttempt = 0
-                startHeartbeat()
-                DiagnosticLogger.log("Authenticated successfully via AuthenticateCallerAssistant (Mock Mode)")
-                return Result.success(true)
-            }
-
             val authPayload = JSONObject().apply {
                 put("DeviceId", deviceId)
                 put("DeviceName", secureStorage.getDeviceName())
@@ -357,6 +373,14 @@ class TaloolaPosConnection(
             val capsGranted = json.optBoolean("CallerAssistantGranted", json.optBoolean("callerAssistantGranted", true))
             val serverId = json.optString("ServerId", json.optString("serverId", ""))
 
+            // Verify Authenticated ServerId matches Expected ServerId
+            if (expectedServerId.isNotBlank() && serverId.isNotBlank() && !serverId.equals(expectedServerId, ignoreCase = true)) {
+                val diag = "Stage: SignalR AuthenticateCallerAssistant ServerId check\nExpected: $expectedServerId\nReceived: $serverId"
+                DiagnosticLogger.log(diag, isError = true)
+                _connectionState.value = ConnectionState.ACCESS_DENIED
+                return Result.failure(Exception("معرّف الخادم في مصادقة SignalR ($serverId) غير مطابق للمعرّف المقترن ($expectedServerId)"))
+            }
+
             if (success && capsGranted) {
                 if (serverId.isNotBlank()) {
                     secureStorage.saveTrustedServerId(serverId)
@@ -364,6 +388,7 @@ class TaloolaPosConnection(
                 _connectionState.value = ConnectionState.READY
                 reconnectAttempt = 0
                 startHeartbeat()
+                flushPendingContextQueue()
                 DiagnosticLogger.log("Caller Assistant authenticated successfully on /posHub ✓")
                 Result.success(true)
             } else {
@@ -588,6 +613,137 @@ class TaloolaPosConnection(
         _heartbeatStatus.value = _heartbeatStatus.value.copy(isActive = false)
     }
 
+    private val pendingContextQueue = java.util.concurrent.ConcurrentLinkedQueue<CustomerContext>()
+
+    fun queuePendingContext(context: CustomerContext) {
+        pendingContextQueue.add(context)
+        DiagnosticLogger.log("Queued customer context for ${context.phone} (Pending: ${pendingContextQueue.size})")
+    }
+
+    fun flushPendingContextQueue() {
+        if (pendingContextQueue.isEmpty()) return
+        scope.launch {
+            while (pendingContextQueue.isNotEmpty() && _connectionState.value == ConnectionState.READY) {
+                val item = pendingContextQueue.poll() ?: break
+                try {
+                    val payload = JSONObject().apply {
+                        put("customerId", item.customerId)
+                        put("phone", item.phone)
+                        put("normalizedPhone", item.normalizedPhone)
+                        put("name", item.name)
+                        put("area", item.area)
+                        put("address", item.address)
+                        put("notes", item.notes)
+                        put("deviceId", secureStorage.getDeviceId())
+                        put("operatorAccount", secureStorage.getOperatorAccount())
+                    }
+                    hubClient.invoke(
+                        TaloolaPosCallerHubApi.METHOD_SEND_CONTEXT_TO_CASHIER,
+                        payload.toString(),
+                        secureStorage.getSessionToken()
+                    )
+                    DiagnosticLogger.log("Delivered queued caller context for ${item.phone} to cashier ✓")
+                } catch (e: Exception) {
+                    pendingContextQueue.add(item)
+                    break
+                }
+            }
+        }
+    }
+
+    /**
+     * Section 15: Reconnect Flow without needing QR scan each time.
+     * Uses saved credentials, handles DHCP IP change via discovery, calls POST /api/caller-assistant/reconnect,
+     * connects SignalR, and authenticates as CallerAssistant.
+     */
+    suspend fun reconnect(): Result<Boolean> = withContext(Dispatchers.IO) {
+        if (!secureStorage.isPaired()) {
+            _connectionState.value = ConnectionState.DISCONNECTED
+            DiagnosticLogger.log("Cannot reconnect: Device is not paired")
+            return@withContext Result.failure(Exception("الجهاز غير مقترن بـ TaloolaPos"))
+        }
+
+        _connectionState.value = ConnectionState.RECONNECTING
+        val savedServerId = secureStorage.getTrustedServerId()
+        var host = secureStorage.getServerHost()
+        val port = secureStorage.getServerPort()
+        val tls = secureStorage.getUseTls()
+        val deviceId = secureStorage.getDeviceId()
+        val installationBinding = secureStorage.getInstallationBinding()
+        val callerCredential = secureStorage.getCallerCredential()
+        val proto = secureStorage.getProtocolVersion()
+
+        DiagnosticLogger.log("Starting Reconnect: ServerId=$savedServerId at $host:$port")
+
+        // 1. TCP connectivity check with LAN Discovery fallback
+        var tcpRes = bootstrapClient.checkTcpConnectivity(host, port)
+        if (tcpRes.isFailure) {
+            DiagnosticLogger.log("Endpoint $host:$port not responding. Initiating LAN discovery for $savedServerId...")
+            val discovered = discoveryClient.discoverServers()
+            val found = discovered.find { it.serverId.equals(savedServerId, ignoreCase = true) }
+            if (found != null && found.host.isNotBlank()) {
+                host = found.host
+                secureStorage.saveServerHost(host)
+                DiagnosticLogger.log("Discovered server $savedServerId at updated DHCP IP: $host")
+                tcpRes = bootstrapClient.checkTcpConnectivity(host, port)
+            }
+        }
+
+        if (tcpRes.isFailure) {
+            _connectionState.value = ConnectionState.SERVER_UNAVAILABLE
+            return@withContext Result.failure(Exception("الخادم غير متاح على الشبكة المحلية"))
+        }
+
+        // 2. Call POST /api/caller-assistant/reconnect
+        val reconnectRes = bootstrapClient.reconnectCallerAssistant(
+            host = host,
+            port = port,
+            tls = tls,
+            serverId = savedServerId,
+            deviceId = deviceId,
+            installationBinding = installationBinding,
+            callerCredential = callerCredential,
+            protocolVersion = proto
+        )
+
+        if (reconnectRes.isFailure) {
+            val err = reconnectRes.exceptionOrNull()?.message.orEmpty()
+            if (err.contains("SESSION_EXPIRED", ignoreCase = true) || err.contains("منتهية", ignoreCase = true)) {
+                _connectionState.value = ConnectionState.SESSION_EXPIRED
+                return@withContext Result.failure(Exception("انتهت صلاحية جلسة الاقتران، يرجى إعادة مسح رمز QR جديد"))
+            }
+        }
+
+        // 3. Connect SignalR
+        val connectRes = connect(host, port, tls)
+        if (connectRes.isFailure) {
+            _connectionState.value = ConnectionState.SERVER_UNAVAILABLE
+            return@withContext Result.failure(connectRes.exceptionOrNull() ?: Exception("تعذر الاتصال بـ /posHub"))
+        }
+
+        // 4. AuthenticateCallerAssistant on /posHub
+        val authRes = authenticateCallerAssistant(
+            targetHost = host,
+            targetPort = port,
+            tls = tls,
+            deviceId = deviceId,
+            deviceToken = callerCredential,
+            expectedServerId = savedServerId
+        )
+
+        if (authRes.isSuccess) {
+            _connectionState.value = ConnectionState.READY
+            reconnectAttempt = 0
+            startHeartbeat()
+            flushPendingContextQueue()
+            DiagnosticLogger.log("Reconnected to TaloolaPos successfully ✓")
+            Result.success(true)
+        } else {
+            _connectionState.value = ConnectionState.ACCESS_DENIED
+            Result.failure(authRes.exceptionOrNull() ?: Exception("فشلت مصادقة البدالة"))
+        }
+    }
+
     /**
      * Auto Reconnect with backoff (1s, 2s, 5s, 10s, 20s, 30s)
      */
@@ -598,14 +754,11 @@ class TaloolaPosConnection(
             DiagnosticLogger.log("Auto-reconnect scheduled in ${backoff}s (attempt ${reconnectAttempt + 1})")
             delay(backoff * 1000)
 
-            _connectionState.value = ConnectionState.RECONNECTING
-            val res = authenticateCallerAssistant()
+            val res = reconnect()
             if (res.isSuccess) {
                 reconnectAttempt = 0
-                DiagnosticLogger.log("Reconnected to TaloolaPos successfully ✓")
             } else {
                 reconnectAttempt = minOf(reconnectAttempt + 1, RECONNECT_BACKOFF_SECONDS.lastIndex)
-                _connectionState.value = ConnectionState.SERVER_UNAVAILABLE
             }
         }
     }

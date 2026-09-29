@@ -122,7 +122,7 @@ fun WindowsServerCenterScreen(
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Server ID:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("TALOOLA-SRV-BAGHDAD-01", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                    Text(trustedServerId.ifBlank { "غير مقترن" }, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("عنوان IP:", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -313,8 +313,9 @@ fun WindowsServerCenterScreen(
 
                 Button(
                     onClick = {
+                        val sid = trustedServerId.ifBlank { "POS-SRV-" + java.util.UUID.randomUUID().toString().take(6).uppercase() }
                         val newSession = viewModel.pairingSessionManager.createPairingSession(
-                            serverId = "TALOOLA-SRV-BAGHDAD-01",
+                            serverId = sid,
                             host = viewModel.serverHost.value,
                             port = viewModel.serverPort.value,
                             tls = false,

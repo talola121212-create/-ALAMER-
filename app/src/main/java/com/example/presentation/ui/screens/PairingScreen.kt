@@ -168,7 +168,7 @@ fun PairingScreen(
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("معرف الخادم:", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(trustedServerId.ifBlank { "TALOOLA-SRV-BAGHDAD-01" }, fontWeight = FontWeight.Bold)
+                            Text(trustedServerId.ifBlank { "غير متوفر" }, fontWeight = FontWeight.Bold)
                         }
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

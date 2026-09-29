@@ -94,16 +94,16 @@ class DiscoveryClient(
         return true
     }
 
-    fun getServerInfo(host: String, port: Int = 5000): ServerInfo {
+    fun getServerInfo(host: String, port: Int = 5000, knownServerId: String = ""): ServerInfo {
         return ServerInfo(
-            serverId = "taloola-server-" + host.replace(".", ""),
+            serverId = knownServerId,
             host = host,
             port = port,
             serviceName = "Taloola POS",
             protocolVersion = expectedProtocolVersion,
             sessionId = "",
             sessionActive = true,
-            serverVersion = "3.0.0",
+            serverVersion = "3.2.0",
             masterDataVersion = "1"
         )
     }
@@ -112,15 +112,20 @@ class DiscoveryClient(
         return try {
             if (payload.startsWith("{")) {
                 val json = JSONObject(payload)
+                val sid = json.optString("ServerId", json.optString("serverId", "")).ifBlank {
+                    json.optString("sid", "")
+                }
+                if (sid.isBlank()) return null
+
                 ServerInfo(
-                    serverId = json.optString("serverId", "taloola-pos"),
+                    serverId = sid,
                     host = json.optString("host", senderHost).ifBlank { senderHost },
-                    port = json.optInt("port", 5000),
-                    serviceName = json.optString("serviceName", "Taloola POS"),
-                    protocolVersion = json.optString("protocolVersion", "1.0"),
-                    sessionId = json.optString("sessionId", ""),
-                    sessionActive = json.optBoolean("sessionActive", true),
-                    serverVersion = json.optString("serverVersion", "1.0.0"),
+                    port = json.optInt("port", json.optInt("Port", 5000)),
+                    serviceName = json.optString("serviceName", json.optString("ServiceName", "Taloola POS")),
+                    protocolVersion = json.optString("protocolVersion", json.optString("ProtocolVersion", "1.0")),
+                    sessionId = json.optString("sessionId", json.optString("SessionId", "")),
+                    sessionActive = json.optBoolean("sessionActive", json.optBoolean("SessionActive", true)),
+                    serverVersion = json.optString("serverVersion", json.optString("ServerVersion", "3.2.0")),
                     masterDataVersion = json.optString("masterDataVersion", "1")
                 )
             } else {
@@ -130,15 +135,18 @@ class DiscoveryClient(
                     if (parts.size == 2) parts[0].trim() to parts[1].trim() else null
                 }.toMap()
 
+                val sid = map["ServerId"] ?: map["serverId"] ?: map["sid"] ?: ""
+                if (sid.isBlank()) return null
+
                 ServerInfo(
-                    serverId = map["serverId"] ?: "taloola-pos",
+                    serverId = sid,
                     host = map["host"] ?: senderHost,
                     port = map["port"]?.toIntOrNull() ?: 5000,
                     serviceName = map["serviceName"] ?: "Taloola POS",
                     protocolVersion = map["protocolVersion"] ?: "1.0",
                     sessionId = map["sessionId"] ?: "",
                     sessionActive = map["sessionActive"]?.toBoolean() ?: true,
-                    serverVersion = map["serverVersion"] ?: "1.0.0",
+                    serverVersion = map["serverVersion"] ?: "3.2.0",
                     masterDataVersion = map["masterDataVersion"] ?: "1"
                 )
             }

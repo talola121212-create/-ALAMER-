@@ -67,22 +67,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val autoOpenDetails: StateFlow<Boolean> = _autoOpenDetails.asStateFlow()
 
     // Windows TaloolaPos Server Dashboard State
-    private val _connectedDevices = MutableStateFlow(
-        listOf(
-            ConnectedDeviceInfo("Alamer بدالة", "CallerAssistant", "192.168.1.55", "TALOOLA-SRV-BAGHDAD-01", "CallerAssistant", "متصل", "الآن"),
-            ConnectedDeviceInfo("كاشير الدلفري 1", "Cashier", "192.168.1.50", "TALOOLA-SRV-BAGHDAD-01", "Cashier, Orders", "متصل", "منذ 2 د"),
-            ConnectedDeviceInfo("كاشير الصالة 2", "Cashier", "192.168.1.51", "TALOOLA-SRV-BAGHDAD-01", "Cashier, Orders", "متصل", "منذ 5 د"),
-            ConnectedDeviceInfo("طابعة المطبخ", "Printer", "192.168.1.52", "TALOOLA-SRV-BAGHDAD-01", "Printing", "متصل", "الآن"),
-            ConnectedDeviceInfo("شاشة المطبخ KDS", "Kitchen", "192.168.1.53", "TALOOLA-SRV-BAGHDAD-01", "KitchenDisplay", "متصل", "الآن")
-        )
-    )
+    private val _connectedDevices = MutableStateFlow<List<ConnectedDeviceInfo>>(emptyList())
     val connectedDevices: StateFlow<List<ConnectedDeviceInfo>> = _connectedDevices.asStateFlow()
 
-    private val _pendingDevices = MutableStateFlow(
-        listOf(
-            PendingApprovalDevice("dev-new-89", "هاتف بدالة مساند 2", "CallerAssistant", "192.168.1.61", "15:20")
-        )
-    )
+    private val _pendingDevices = MutableStateFlow<List<PendingApprovalDevice>>(emptyList())
     val pendingDevices: StateFlow<List<PendingApprovalDevice>> = _pendingDevices.asStateFlow()
 
     val pendingSyncCount: StateFlow<Int> = callRepository.pendingCount
@@ -220,8 +208,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun generateNewPairingSessionFromWindows() {
+        val sid = _trustedServerId.value.ifBlank { "POS-SRV-" + java.util.UUID.randomUUID().toString().take(6).uppercase() }
         val newSession = pairingSessionManager.createPairingSession(
-            serverId = "TALOOLA-SRV-BAGHDAD-01",
+            serverId = sid,
             host = _serverHost.value,
             port = _serverPort.value,
             tls = false,
@@ -241,7 +230,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 deviceName = found.deviceName,
                 deviceType = found.deviceType,
                 ipAddress = found.ipAddress,
-                serverId = "TALOOLA-SRV-BAGHDAD-01",
+                serverId = _trustedServerId.value.ifBlank { "POS-SRV" },
                 capabilities = "CallerAssistant",
                 status = "متصل",
                 lastSeen = "الآن"
